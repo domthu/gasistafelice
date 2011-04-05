@@ -77,6 +77,12 @@ class GASSupplierOrder(models.Model):
                 self.products.add(product)
         return
 
+    @property
+    def report_name(self):
+        return 'GAS_' .self.supplier.supplier .'_{:%Y-%m-%d}'.format(delivery_date)
+
+
+
 class GASSupplierOrderProduct(models.Model):
 
     """A Product (actually, a GASSupplierStock) available to GAS Members in the context of a given GASSupplierOrder.
