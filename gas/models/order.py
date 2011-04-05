@@ -16,7 +16,9 @@ if not Workflow.objects.get(name="DefaultOrder"):
     init_workflow()
 
 class GASSupplierStock(models.Model):
-    """A Product as available to a given GAS (including price, order constraints and availability information)."""
+    """A Product as available to a given GAS (including price, order constraints and availability information).
+       Exploring conflit in subversion
+    """
 
     gas = models.ForeignKey(GAS)
     supplier_stock = models.ForeignKey(SupplierStock)
