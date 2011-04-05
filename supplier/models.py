@@ -3,6 +3,8 @@
 These are fundamental DES data to relies on. They represents market offering.
 
 It relies on base model.
+
+Definition: `Vocabolario - Fornitori <http://www.jagom.org/trac/REESGas/wiki/BozzaVocabolario#Fornitori>`__ (ita only)
 """
 
 from django.db import models
@@ -21,6 +23,11 @@ class Supplier(models.Model):
     referrers = models.ManyToManyField(Person, through="SupplierReferrer") 
     flavour = models.CharField(max_length=128, choices=const.SUPPLIER_FLAVOUR_LIST, default=const.SUPPLIER_FLAVOUR_LIST[0][0])
     cert_set = models.ManyToManyField('Certification')
+
+    # the set of products provided by this Supplier to every GAS
+    @property
+    def product_catalog(self):
+        return [s.product for s in SupplierStock.objects.filter(supplier=self)]
 
     def __unicode__(self):
         return self.name
@@ -70,7 +77,7 @@ class Product(models.Model):
     mu = models.ForeignKey(ProductMU)
     name = models.CharField(max_length=128)
     description = models.TextField(blank=True)
-
+    
     def permission_check(self, user, perm):
 
         if perm == const.SUPPLIER_REFERRER:
