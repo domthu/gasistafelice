@@ -3,6 +3,9 @@ from django.db import models
 from gasistafelice.base import const as role
 
 class GASRolesManager(models.Manager):
+	"""test per dom
+
+	"""
 
     def tech_referrers(self):
         return self.get_query_set().filter(role_set__name__exact=role.GAS_REFERRER_TECH)
