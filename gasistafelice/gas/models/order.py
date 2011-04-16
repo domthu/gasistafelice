@@ -3,22 +3,19 @@
 from django.db import models
 from django.utils.translation import ugettext, ugettext_lazy as _
 
-from gasistafelice.base.models import Place 
-from gasistafelice.gas.models import GAS, GASMember, GASSupplierSolidalPact
+from permissions import PermissionBase # mix-in class for permissions management
+
+from gasistafelice.base.models import Resource, Place, DefaultTransition
+from gasistafelice.gas.models.base import GAS, GASMember, GASSupplierSolidalPact
 from gasistafelice.supplier.models import Supplier, SupplierStock
-from gasistafelice.gas.const import STATES_LIST
+from gasistafelice.auth.utils import register_parametric_role
+from gasistafelice.auth import GAS_REFERRER_ORDER, GAS_REFERRER_DELIVERY, GAS_REFERRER_WITHDRAWAL
 
 from workflows.models import Workflow
-from workflows.utils import get_workflow
+from workflows.utils import get_workflow, get_state, do_transition
 
-if not Workflow.objects.get(name="DefaultOrder"):
-    from gasistafelice.gas.utils import init_workflow
-    init_workflow()
-
-class GASSupplierStock(models.Model):
-    """A Product as available to a given GAS (including price, order constraints and availability information).
-       	
-    """
+class GASSupplierStock(Resource, PermissionBase, models.Model):
+    """A Product as available to a given GAS (including price, order constraints and availability information)."""
 
     gas = models.ForeignKey(GAS)
     supplier_stock = models.ForeignKey(SupplierStock)
@@ -27,7 +24,7 @@ class GASSupplierStock(models.Model):
     ## constraints on what a single GAS Member is able to order
     # minimun amount of Product units a GAS Member is able to order 
     order_minimum_amount = models.PositiveIntegerField(null=True, blank=True)
-    # increment step (in Product units) after `order_minimum_amount`; 
+    # increment step (in Product units) for amounts exceeding minimum; 
     # useful when a Product ships in packages containing multiple units. 
     order_step = models.PositiveSmallIntegerField(null=True, blank=True)
     
@@ -41,8 +38,19 @@ class GASSupplierStock(models.Model):
         # Product base price as updated by agreements contained in GASSupplierSolidalPact
         price_percent_update = GASSupplierSolidalPact.objects.get(gas=self.gas, supplier=self.supplier).order_price_percent_update
         return self.supplier_stock.price*(1 + price_percent_update)
+    
+    @property        
+    def local_grants(self):
+        rv = (
+              # permission specs go here
+              )     
+        return rv
+    
+    class Meta:
+        app_label = 'gas'
 
-class GASSupplierOrder(models.Model):
+
+class GASSupplierOrder(Resource, PermissionBase, models.Model):
     """An order issued by a GAS to a Supplier.
     See `here <http://www.jagom.org/trac/REESGas/wiki/BozzaVocabolario#OrdineFornitore>`__ for details (ITA only).
 
@@ -56,30 +64,39 @@ class GASSupplierOrder(models.Model):
     supplier = models.ForeignKey(Supplier)
     date_start = models.DateTimeField(help_text=_("when the order will be opened"))
     date_end = models.DateTimeField(help_text=_("when the order will be closed"))
-    # Where and when delivery occurs
-    # TODO: factor out delivery information in a `DeliveryAppointment` model class
-    delivery_date = models.DateTimeField(help_text=_("when the order will be delivered by supplier"))
-    delivery_place = models.ForeignKey('Place', related_name="deliveries", help_text=_("where the order will be delivered by supplier"))
+    # Where and when Delivery occurs
+    delivery = models.ForeignKey('Delivery', related_name="supplier_orders")
     # minimum economic amount for the GASSupplierOrder to be accepted by the Supplier  
     order_minimum_amount = models.PositiveIntegerField(null=True, blank=True) # FIXME: should be a `CurrencyField` ?
-    # Where and when withdrawal occurs
-    # TODO: factor out withdrawal information in a `WithdrawalAppointment` model class
-    withdrawal_date = models.DateTimeField(help_text=_("when the order will be withdrawn by GAS members"))
-    withdrawal_place = models.ForeignKey('Place', related_name="withdrawals", help_text=_("where the order will be withdrawn by GAS members"))
-
+    # Where and when Withdrawal occurs
+    withdrawal = models.ForeignKey('Withdrawal', related_name="supplier_orders")
     # STATUS is MANAGED BY WORKFLOWS APP: 
     # status = models.CharField(max_length=32, choices=STATES_LIST, help_text=_("order state"))
     products = models.ManyToManyField(GASSupplierStock, help_text=_("products available for the order"), blank=True, through='GASSupplierOrderProduct')
 
+    def setup_roles(self):
+        # register a new `GAS_REFERRER_ORDER` Role for this GASSupplierOrder
+        register_parametric_role(name=GAS_REFERRER_ORDER, param1=self)
+        
+    @property        
+    def local_grants(self):
+        rv = (
+              # permission specs go here
+              )     
+        return rv
+
     def save(self):
-        # If no Products has been associated to this order, then use every Product bound to the Supplier
         super(GASSupplierOrder, self).save()
+        # If no Products has been associated to this order, then use every Product bound to the Supplier        
         if not self.products.all():
             for product in self.supplier.product_catalog:
                 self.products.add(product)
         return
+        
+    class Meta:
+        app_label = 'gas'
 
-class GASSupplierOrderProduct(models.Model):
+class GASSupplierOrderProduct(Resource, PermissionBase, models.Model):
 
     """A Product (actually, a GASSupplierStock) available to GAS Members in the context of a given GASSupplierOrder.
     See `here <http://www.jagom.org/trac/REESGas/wiki/BozzaVocabolario#ListinoFornitoreGasista>`__  for details (ITA only).
@@ -108,7 +125,17 @@ class GASSupplierOrderProduct(models.Model):
             amount=+ order.ordered_amount
         return amount 
     
-class GASMemberOrder(models.Model):
+    @property        
+    def local_grants(self):
+        rv = (
+              # permission specs go here
+              )     
+        return rv
+    
+    class Meta:
+        app_label = 'gas'
+
+class GASMemberOrder(Resource, PermissionBase, models.Model):
     """An order made by a GAS member in the context of a given GASSupplierOrder.
 
     See `here http://www.jagom.org/trac/REESGas/wiki/BozzaVocabolario#OrdineGasista`__  for details (ITA only).
@@ -133,6 +160,7 @@ class GASMemberOrder(models.Model):
     @property
     def order(self):
         return self.product.order 
+
     # which GAS this order was issued to ? 
     @property
     def gas(self):
@@ -144,16 +172,22 @@ class GASMemberOrder(models.Model):
     def workflow(self):
         return get_workflow(self)
 
-    @workflow.set
+    @workflow.setter
     def workflow(self, value=None):
-        raise AttributeError(_("Workflow for specific order is not allowed. Just provide a default order workflow for your GAS"))
+        raise AttributeError(_("Workflow for specific GASMemberOrder is not allowed. Just provide a default order workflow for your GAS"))
 
-    def forward(self):
+    def forward(self, user):
         """Apply default transition"""
-        #TODO!
-        default_workflow = self.gas.workflow_default_gasmember_order
-        transition = default_workflow. #TODO! Serie di stati o serie di transizioni? TODO
+        state = get_state(self)
+        transition = DefaultTransition.objects.get(workflow=self.workflow, state=state).transition
+        do_transition(self, transition, user)
         
+    @property        
+    def local_grants(self):
+        rv = (
+              # permission specs go here
+              )     
+        return rv
 
     def save(self):
         if not self.workflow:
@@ -162,4 +196,60 @@ class GASMemberOrder(models.Model):
             set_workflow(self, w)
 
         return super(GASMemberOrder, self).save()
+
+    class Meta:
+        app_label = 'gas'
+
+class Delivery(Resource, PermissionBase, models.Model):
+    """
+    A delivery appointment, i.e. an event where one or more Suppliers deliver goods 
+    associated with SupplierOrders issued by a given GAS (or Retina of GAS).  
+    """
+    
+    place = models.ForeignKey(Place, related_name="deliveries", help_text=_("where the order will be delivered by supplier"))
+    date = models.DateTimeField(help_text=_("when the order will be delivered by supplier"))    
+    # GAS referrers for this Delivery appointment (if any) 
+    referrers = models.ManyToManyField(GASMember, null=True, blank=True)
+    
+    def setup_roles(self):
+        # register a new `GAS_REFERRER_DELIVERY` Role for this GAS
+        register_parametric_role(name=GAS_REFERRER_DELIVERY, param1=self)            
+    
+    @property        
+    def local_grants(self):
+        rv = (
+              # permission specs go here
+              )     
+        return rv
+    
+    class Meta:
+        app_label = 'gas'
+
+
+class Withdrawal(Resource, PermissionBase, models.Model):
+    """
+    A wihtdrawal appointment, i.e. an event where a GAS (or Retina of GAS) distribute 
+    to their GASMembers goods they ordered issuing GASMemberOrders to the GAS/Retina.  
+    """
+    
+    place = models.ForeignKey(Place, related_name="withdrawals", help_text=_("where the order will be withdrawn by GAS members"))
+    # a Withdrawal appointment usually span a time interval
+    start_time = models.TimeField(help_text=_("when the withdrawal will start"))
+    end_time = models.TimeField(help_text=_("when the withdrawal will end"))
+    # GAS referrers for this Withdrawal appointment  
+    referrers = models.ManyToManyField(GASMember)
+    
+    def setup_roles(self):
+        # register a new `GAS_REFERRER_WITHDRAWAL` Role for this GAS
+        register_parametric_role(name=GAS_REFERRER_WITHDRAWAL, param1=self)   
+        
+    @property        
+    def local_grants(self):
+        rv = (
+              # permission specs go here
+              )     
+        return rv 
+    
+    class Meta:
+        app_label = 'gas'
 
